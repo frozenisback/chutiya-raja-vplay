@@ -733,7 +733,7 @@ async def process_play_command(message: Message, query: str):
         secs = isodate.parse_duration(duration_iso).total_seconds()
         if secs > MAX_DURATION_SECONDS:
             await processing_message.edit(
-                "❌ Streams longer than 8 min are not allowed. If u are the owner of this bot contact @xyz09723 to upgrade your plan"
+                "❌ Streams longer than 8 min are not allowed. If u are the owner of this bot contact raja-bhai to upgrade your plan"
             )
             return
 
