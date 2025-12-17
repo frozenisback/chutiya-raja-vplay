@@ -917,12 +917,79 @@ async def fallback_local_playback(chat_id: int, message: Message, song_info: dic
                 f"Starting local playback for ⚡ {song_info['title']}..."
             )
 
-        # Download & play locally
+        # Download & play locally (video)
         media_path = await vector_transport_resolver(video_url)
-        await call_py.play(
-            chat_id,
-            MediaStream(media_path)
-        )
+
+        # Attempt to start video playback — try several common APIs/fallbacks so this works with different py-tgcalls wrappers
+        played = False
+        play_exception = None
+
+        # 1) Preferred: call_py.play with explicit video flag if supported
+        if not played and hasattr(call_py, "play"):
+            try:
+                # Try calling with a video=True kwarg (some wrappers accept this)
+                try:
+                    await call_py.play(chat_id, MediaStream(media_path), video=True)
+                except TypeError:
+                    # fallback to positional if some wrappers expect different signature
+                    await call_py.play(chat_id, MediaStream(media_path))
+                played = True
+            except Exception as e:
+                play_exception = e
+
+        # 2) If call_py offers a dedicated video method
+        if not played and hasattr(call_py, "play_video"):
+            try:
+                await call_py.play_video(chat_id, MediaStream(media_path))
+                played = True
+            except Exception as e:
+                play_exception = e
+
+        # 3) Try common pytgcalls-style classes (VideoPiped / VideoStream) if available
+        if not played:
+            try:
+                # many pytgcalls variants provide VideoPiped / InputStream-like helpers
+                try:
+                    from pytgcalls import VideoPiped  # type: ignore
+                    await call_py.play(chat_id, VideoPiped(media_path))
+                    played = True
+                except Exception:
+                    # fallback to VideoPiped under different import paths or names
+                    try:
+                        # some forks name it VideoStream or InputStream - try a few likely options
+                        from pytgcalls import VideoStream  # type: ignore
+                        await call_py.play(chat_id, VideoStream(media_path))
+                        played = True
+                    except Exception:
+                        # last attempt: set an attribute on MediaStream to mark it as video if supported
+                        ms = MediaStream(media_path)
+                        if hasattr(ms, "is_video"):
+                            try:
+                                setattr(ms, "is_video", True)
+                            except Exception:
+                                pass
+                        await call_py.play(chat_id, ms)
+                        played = True
+            except Exception as e:
+                play_exception = e
+
+        # 4) Last-resort: try calling play with the raw media_path if some wrappers accept that
+        if not played:
+            try:
+                if hasattr(call_py, "play_file"):
+                    await call_py.play_file(chat_id, media_path, video=True)
+                    played = True
+                else:
+                    # try a generic play with path (many wrappers accept MediaStream or path)
+                    await call_py.play(chat_id, media_path)
+                    played = True
+            except Exception as e:
+                play_exception = e
+
+        if not played:
+            raise RuntimeError(f"Could not start video playback. Last error: {play_exception}")
+
+        # store playback task
         playback_tasks[chat_id] = asyncio.current_task()
 
         # Prepare caption & keyboard
@@ -977,7 +1044,7 @@ async def fallback_local_playback(chat_id: int, message: Message, song_info: dic
                 f"• Title: {song_info.get('title','Unknown')}\n"
                 f"• Duration: {song_info.get('duration','Unknown')}\n"
                 f"• Requested by: {song_info.get('requester','Unknown')}\n"
-                f"• Mode: local"
+                f"• Mode: local (video)"
             )
         )
 
